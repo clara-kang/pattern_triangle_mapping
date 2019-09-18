@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<inkscape-extension xmlns="http://www.inkscape.org/namespace/inkscape/extension">
+    <_name>Triangle Pattern</_name>
+    <id>triangle.pattern</id>
+    <dependency type="executable" location="extensions">aaaa.py</dependency>
+    <effect needs-live-preview="false">
+        <object-type>path</object-type>
+        <effects-menu>
+            <submenu _name="Generate from Path"/>
+        </effects-menu>
+    </effect>
+    <script>
+        <command reldir="extensions" interpreter="python">pattern_triangle_matching.py</command>
+    </script>
+</inkscape-extension>
