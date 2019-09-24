@@ -4,6 +4,7 @@
 # V.06
 
 import inkex, simplepath, simplestyle, simpletransform, sys, re, os
+import numpy as np
 from lxml import etree
 
 def pathIsTriangle(svg_path):
@@ -22,8 +23,8 @@ def getTriangleVerts(svg_path):
     return verts
 
 def getTriangleSize(trngle_verts):
-    xs = [vert[0] for v in trngle_verts]
-    ys = [vert[1] for v in trngle_verts]
+    xs = [v[0] for v in trngle_verts]
+    ys = [v[1] for v in trngle_verts]
     width = max(xs) - min(xs)
     height = max(ys) - min(ys)
     return width,height
@@ -35,7 +36,7 @@ def formMatrix(trngle_verts):
         for j in range(0, 3):
             row.append(trngle_verts[j][i])
         matrx.append(row)
-    # matrx.append([0, 0, 1])
+    matrx.append([1, 1, 1])
     return matrx
 
 
@@ -80,14 +81,22 @@ class C(inkex.Effect):
                     if pathIsTriangle(svg_path):
                         self.bndry_trngle_verts = getTriangleVerts(svg_path)
                         self.bndry_trngle_matrx = formMatrix(self.bndry_trngle_verts)
-                        inkex.debug("bndry_trngle_verts: " + str(self.bndry_trngle_verts))
+                        inkex.debug("self.bndry_trngle_verts: " + str(self.bndry_trngle_verts))
+                        inkex.debug("self.bndry_trngle_matrx: " + str(self.bndry_trngle_matrx))
 
                         # find pattern
                         self.defs = self.document.xpath('//svg:defs', namespaces=inkex.NSS)[0]
                         patterns = self.defs.xpath('//svg:defs/svg:pattern', namespaces=inkex.NSS)
                         if len(patterns) > 0:
                             self.pattern = patterns[0]
-                            self.pattern.attrib[u'width'], self.pattern.attrib[u'height'] = getTriangleSize(self.bndry_trngle_verts)
+                            pattern_trnsfrm = simpletransform.parseTransform(self.pattern.attrib[u'patternTransform'])
+                            scale_x = pattern_trnsfrm[0][0]
+                            scale_y = pattern_trnsfrm[1][1]
+                            w,h = getTriangleSize(self.bndry_trngle_verts)
+                            inkex.debug("w: " + str(w) + ", h: " + str(h))
+                            self.pattern.attrib[u'width'] = str(w / scale_x)
+                            self.pattern.attrib[u'height'] = str(h / scale_y)
+                            # self.pattern.attrib[u'patternTransform' ] = simpletransform.formatTransform([[1, 0, 0],[0, 1, 0]])
                             inkex.debug("pattern: " + str(self.pattern))
 
 
@@ -98,15 +107,16 @@ class C(inkex.Effect):
                 if pathIsTriangle(svg_path):
                     trngle_verts = getTriangleVerts(svg_path)
                     trngle_matrx = formMatrix(trngle_verts)
-                    pattern_trnsform = simpletransform.composeTransform(trngle_matrx, simpletransform.invertTransform(self.bndry_trngle_matrx))
-                    # initial_trnsform = simpletransform.parseTransform(self.pattern.attrib[u'patternTransform'])
-                    # pattern_trnsform = simpletransform.composeTransform(pattern_trnsform, initial_trnsform)
+                    pattern_trnsform = np.matmul(trngle_matrx, np.linalg.inv(self.bndry_trngle_matrx))
+                    # pattern_trnsform = [[0.5, 0, 0], [0, 0.5, 0]]
+                    initial_trnsform = simpletransform.parseTransform(self.pattern.attrib[u'patternTransform'])
+                    final_trnsform = simpletransform.composeTransform(pattern_trnsform[0:3], initial_trnsform)
                     # create transformed pattern
                     pattern_transformed = etree.Element("{%s}pattern" % inkex.NSS[u'svg'])
                     pattern_transformed.attrib[u'id'] = "pattern_for_" + str(id)
                     pattern_transformed.attrib["{%s}collect"  % inkex.NSS[u'inkscape']] = "always"
                     pattern_transformed.attrib["{%s}href"  % inkex.NSS[u'xlink']] = '#' + self.pattern.attrib[u'id']
-                    pattern_transformed.attrib[u'patternTransform'] = simpletransform.formatTransform(pattern_trnsform)
+                    pattern_transformed.attrib[u'patternTransform'] = simpletransform.formatTransform(final_trnsform)
                     # append transformed pattern
                     self.defs.append(pattern_transformed)
                     # fill triangle with pattern
