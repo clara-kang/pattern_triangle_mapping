@@ -1,14 +1,13 @@
 #!/usr/bin/env python
 
-# Written by Jabiertxof
-# V.06
+# Written by Clara Kang
 
 import inkex, simplepath, simplestyle, simpletransform, sys, re, os
-import numpy as np
+# import numpy as np
+import three_transform as three
 from lxml import etree
 
 def pathIsTriangle(svg_path):
-    # inkex.debug("svg_path[1]: "+ str(svg_path[1][0]))
     if len(svg_path) == 4 and svg_path[1][0] == 'L' and svg_path[2][0] == 'L' and svg_path[3][0] == 'Z':
         return True
     return False
@@ -43,6 +42,10 @@ def formMatrix(trngle_verts):
 class C(inkex.Effect):
     def __init__(self):
         inkex.Effect.__init__(self)
+        self.OptionParser.add_option("-p", "--pattern_name",
+                                     action="store", type="string",
+                                     dest="pattern_name", default="default",
+                                     help="Pattern name")
 
     def createLayer(self, id, label):
         layer = etree.Element("{%s}g" % inkex.NSS[u'svg'])
@@ -53,23 +56,18 @@ class C(inkex.Effect):
 
     def effect(self):
         # search for pattern layer
-        pattern_top_layer = self.document.xpath('//svg:g[@id="pattern_layer"]', namespaces=inkex.NSS)
-        if len(pattern_top_layer) == 0:
+        triangle_layer = self.document.xpath('//svg:g[@id="triangle_layer"]', namespaces=inkex.NSS)
+        if len(triangle_layer) == 0:
             # append pattern layer
-            pattern_top_layer = self.createLayer("pattern_layer", "Pattern Layer")
-            triangle_layer = self.createLayer("triangle_sublayer", "Triangle Boundary")
-            pattern_layer = self.createLayer("pattern_sublayer", "Pattern")
-            pattern_top_layer.append(triangle_layer)
-            pattern_top_layer.append(pattern_layer)
-            self.document.getroot().append(pattern_top_layer)
+            triangle_layer = self.createLayer("triangle_layer", "Triangle Boundary")
+            self.document.getroot().append(triangle_layer)
         else:
-            pattern_top_layer = pattern_top_layer[0]
-            triangle_layer = pattern_top_layer.xpath('//svg:g[@id="triangle_sublayer"]', namespaces=inkex.NSS)[0]
+            triangle_layer = triangle_layer[0]
             # find triangle in the triangle_layer
             trngl_lyr_children = triangle_layer.getchildren()
-            # inkex.debug("trngl_lyr_children"+str(trngl_lyr_children))
             if not len(trngl_lyr_children) == 1:
-                inkex.debug("more than 1 element in Triangle Boundary layer: " + str(len(trngl_lyr_children)))
+                inkex.debug("more or less than 1 element in Triangle Boundary layer: " + str(len(trngl_lyr_children)))
+                return
             else:
                 bndry_trngle = triangle_layer.getchildren()[0]
                 # seems like a path
@@ -81,24 +79,31 @@ class C(inkex.Effect):
                     if pathIsTriangle(svg_path):
                         self.bndry_trngle_verts = getTriangleVerts(svg_path)
                         self.bndry_trngle_matrx = formMatrix(self.bndry_trngle_verts)
-                        inkex.debug("self.bndry_trngle_verts: " + str(self.bndry_trngle_verts))
-                        inkex.debug("self.bndry_trngle_matrx: " + str(self.bndry_trngle_matrx))
 
                         # find pattern
                         self.defs = self.document.xpath('//svg:defs', namespaces=inkex.NSS)[0]
-                        patterns = self.defs.xpath('//svg:defs/svg:pattern', namespaces=inkex.NSS)
+                        # get first pattern is default
+                        if self.options.pattern_name == "default":
+                            patterns = self.defs.xpath('//svg:defs/svg:pattern', namespaces=inkex.NSS)
+                        # find pattern with name
+                        else:
+                            inkex.debug("pattern id is " + '//svg:defs/svg:pattern[@id="' + self.options.pattern_name + '"]')
+                            patterns = self.defs.xpath('//svg:defs/svg:pattern[@id="' + self.options.pattern_name + '"]', namespaces=inkex.NSS)
+
                         if len(patterns) > 0:
                             self.pattern = patterns[0]
+                            inkex.debug("pattern is " + self.pattern.attrib[u'id'])
                             pattern_trnsfrm = simpletransform.parseTransform(self.pattern.attrib[u'patternTransform'])
                             scale_x = pattern_trnsfrm[0][0]
                             scale_y = pattern_trnsfrm[1][1]
                             w,h = getTriangleSize(self.bndry_trngle_verts)
-                            inkex.debug("w: " + str(w) + ", h: " + str(h))
+                            # change pattern size to fit to boundary triangle (preserve its original shape)
                             self.pattern.attrib[u'width'] = str(w / scale_x)
                             self.pattern.attrib[u'height'] = str(h / scale_y)
-                            # self.pattern.attrib[u'patternTransform' ] = simpletransform.formatTransform([[1, 0, 0],[0, 1, 0]])
-                            inkex.debug("pattern: " + str(self.pattern))
-
+                        # cannot find pattern
+                        else:
+                            inkex.debug("cannot find pattern")
+                            return
 
         for id,node in self.selected.iteritems():
             if isPath(node):
@@ -107,12 +112,20 @@ class C(inkex.Effect):
                 if pathIsTriangle(svg_path):
                     trngle_verts = getTriangleVerts(svg_path)
                     trngle_matrx = formMatrix(trngle_verts)
-                    pattern_trnsform = np.matmul(trngle_matrx, np.linalg.inv(self.bndry_trngle_matrx))
-                    # pattern_trnsform = [[0.5, 0, 0], [0, 0.5, 0]]
+                    # apply affine transform
+                    pattern_trnsform = three.multiply(trngle_matrx, three.getInverse(self.bndry_trngle_matrx))
+                    # compose with initial transform of pattern
                     initial_trnsform = simpletransform.parseTransform(self.pattern.attrib[u'patternTransform'])
-                    final_trnsform = simpletransform.composeTransform(pattern_trnsform[0:3], initial_trnsform)
-                    # create transformed pattern
-                    pattern_transformed = etree.Element("{%s}pattern" % inkex.NSS[u'svg'])
+                    final_trnsform = simpletransform.composeTransform(pattern_trnsform, initial_trnsform)
+                    # if pattern for triangle exists, use it
+                    pattern_name = "pattern_for_" + str(id)
+                    existing_patterns = self.defs.xpath('//svg:defs/svg:pattern[@id="' + pattern_name + '"]', namespaces=inkex.NSS)
+                    if len(existing_patterns) > 0:
+                        pattern_transformed = existing_patterns[0]
+                    else:
+                        # create transformed pattern
+                        pattern_transformed = etree.Element("{%s}pattern" % inkex.NSS[u'svg'])
+                    # fill in the attributes for pattern
                     pattern_transformed.attrib[u'id'] = "pattern_for_" + str(id)
                     pattern_transformed.attrib["{%s}collect"  % inkex.NSS[u'inkscape']] = "always"
                     pattern_transformed.attrib["{%s}href"  % inkex.NSS[u'xlink']] = '#' + self.pattern.attrib[u'id']
@@ -123,8 +136,6 @@ class C(inkex.Effect):
                     trngle_styles = simplestyle.parseStyle(node.attrib[u'style'])
                     trngle_styles[u'fill'] = u'url(#' + str(pattern_transformed.attrib[u'id']) + ')'
                     node.attrib[u'style'] = simplestyle.formatStyle(trngle_styles)
-
-                    inkex.debug("pattern_trnsform: " + str(pattern_trnsform))
                 else:
                     inkex.debug("not triangle")
 

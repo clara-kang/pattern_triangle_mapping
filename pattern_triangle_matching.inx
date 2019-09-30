@@ -3,6 +3,7 @@
     <_name>Triangle Pattern</_name>
     <id>triangle.pattern</id>
     <dependency type="executable" location="extensions">pattern_triangle_matching.py</dependency>
+    <param name="pattern_name" type="string" _gui-text="Pattern Name:">default</param>
     <effect needs-live-preview="false">
         <object-type>path</object-type>
         <effects-menu>
