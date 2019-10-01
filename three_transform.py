@@ -1,6 +1,5 @@
 def multiply(A, B):
     def getEntry(row, col):
-        # nonlocal A, B
         res = 0
         for k in range(0, 3):
             res += A[row][k] * B[k][col]
@@ -41,7 +40,6 @@ def transpose(matrx):
             tmp = matrx[i][j]
             matrx[i][j] = matrx[j][i]
             matrx[j][i] = tmp
-        
 
 def getInverse(matrx):
     det = getDeterminant3(matrx)

@@ -2,8 +2,7 @@
 
 # Written by Clara Kang
 
-import inkex, simplepath, simplestyle, simpletransform, sys, re, os
-# import numpy as np
+import inkex, simplepath, simplestyle, simpletransform
 import three_transform as three
 from lxml import etree
 
