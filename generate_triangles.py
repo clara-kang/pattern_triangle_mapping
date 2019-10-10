@@ -1,25 +1,5 @@
 #!/usr/bin/env python
-"""
-Copyright (C) 2010 Alvin Penner, penner@vaxxine.com
 
-- Voronoi Diagram algorithm and C code by Steven Fortune, 1987, http://ect.bell-labs.com/who/sjf/
-- Python translation to file voronoi.py by Bill Simons, 2005, http://www.oxfish.com/
-
-This program is free software; you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation; either version 2 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with this program; if not, write to the Free Software
-Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
-
-"""
 # standard library
 import random
 # local library
@@ -114,12 +94,11 @@ class Pattern(inkex.Effect):
         c = voronoi.Context()
         pts = []
         b = float(self.options.border)          # width of border
-        for i in range(int(q['width']*q['height']/self.options.size/self.options.size)):
-            x = random.random()*q['width']
-            y = random.random()*q['height']
-
-                pts.append(voronoi.Site(x, y))  # leave border area blank
-
+        for i in range(-1, int(q['width']/self.options.size + 2)):
+            for j in range(-1, int(q['height']/self.options.size + 2)):
+                offset_x = random.random() * self.options.size
+                offset_y = random.random() * self.options.size
+                pts.append(voronoi.Site(self.options.size * i + offset_x, self.options.size* j + offset_y))
         if len(pts) < 3:
             inkex.errormsg("Please choose a larger object, or smaller cell size")
             exit()
