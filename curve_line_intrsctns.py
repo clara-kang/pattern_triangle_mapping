@@ -20,7 +20,17 @@ def bezier_length(ctrl_pts):
         start = end
     return curve_len
 
-# def bezier_normal(px, py, t):
+def bezier_normal(ctrl_pts, cw, t):
+    def rotate90cw(vec):
+        return np.array(vec[1], -vec[0])
+    def rotate90ccw(vec):
+        return np.array(-vec[1], vec[0])
+    tangent = 3 * (1-t)**2 * (ctrl_pts[1] - ctrl_pts[0]) + 6 * (1-t) * t * (ctrl_pts[2] - ctrl_pts[1]) + 3 * t**2 * (ctrl_pts[3] - ctrl_pts[2])
+    tangent = tangent / np.linalg.norm(tangent)
+    if cw:
+        return rotate90ccw(tangent)
+    else:
+        return rotate90cw(tangent)
 
 def intersect_bezier_line(px, py, lx, ly):
 

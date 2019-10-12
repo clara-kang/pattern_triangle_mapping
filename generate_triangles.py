@@ -17,7 +17,21 @@ except:
     inkex.errormsg(_("Python version is: ") + str(inkex.sys.version_info))
     exit()
 
-# global variables, remove remove later
+class Point:
+    # 1 for vertex point, 2 for edge point, 3 for internal point
+    def __init__(self, type, loc, normal=np.array([1, 0])):
+        self.type = type
+        self.loc = loc
+        self.normal = normal
+
+    def __str__(self):
+        if self.type == 1:
+            type_str = "v"
+        elif self.type == 2:
+            type_str = "e"
+        else:
+            type_str = "i"
+        return "type: " + type_str + ", loc" + str(self.loc)
 
 def clip_line(x1, y1, x2, y2, w, h):
     if x1 < 0 and x2 < 0:
@@ -129,6 +143,14 @@ def generatePoints(svg_path):
     else:
         inkex.debug("path cw")
 
+    points = []
+    v_pt = Point(1, np.array([27.0, 139.0]))
+    points.append(v_pt)
+    # for path in paths:
+    #     v_pt = Point(1, path[0])
+    #     points.append(v_pt)
+    #     inkex.debug("v_pt: " + str(v_pt))
+    return points
 
 class Pattern(inkex.Effect):
     def __init__(self):
@@ -160,20 +182,27 @@ class Pattern(inkex.Effect):
             rc = p.wait()
             q[query] = scale*float(p.stdout.read())
         mat = simpletransform.composeParents(self.selected[self.options.ids[0]], [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
+
         defs = self.xpathSingle('/svg:svg//svg:defs')
         pattern = inkex.etree.SubElement(defs ,inkex.addNS('pattern','svg'))
-        pattern.set('id', 'Voronoi' + str(random.randint(1, 9999)))
+        pattern.set('id', 'points' + str(random.randint(1, 9999)))
         pattern.set('width', str(q['width']))
         pattern.set('height', str(q['height']))
         pattern.set('patternTransform', 'translate(%s,%s)' % (q['x'] - mat[0][2], q['y'] - mat[1][2]))
         pattern.set('patternUnits', 'userSpaceOnUse')
 
-        # generate random pattern of points
+        # # generate random pattern of points
         node = self.selected.values()[0]
         path_string = node.attrib[u'd']
         svg_path = simplepath.parsePath(path_string)
 
         pts = generatePoints(svg_path)
+        patternstyle = {'stroke': '#000000', 'stroke-width': str(scale)}
+        for point in pts:
+            attern_transformed = inkex.etree.Element("{%s}pattern" % inkex.NSS[u'svg'])
+            # attribs = {'cx': str(point.loc[0]), 'cy': str(point.loc[1]), 'r':str(10), 'style': simplestyle.formatStyle(patternstyle)}
+            attribs = {'cx': str(point.loc[0]), 'cy': str(point.loc[1]), 'r':str(31.0), 'style': "opacity:0.98999999;fill:#000000;fill-opacity:1;stroke:#000000;stroke-width:0.30000001;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:4;stroke-dasharray:none;stroke-opacity:1"}
+            inkex.etree.SubElement(pattern, inkex.addNS('circle', 'svg'), attribs)
 
         # c = voronoi.Context()
         # pts = []
@@ -186,7 +215,7 @@ class Pattern(inkex.Effect):
         # if len(pts) < 3:
         #     inkex.errormsg("Please choose a larger object, or smaller cell size")
         #     exit()
-
+        #
         # # plot Voronoi diagram
         # sl = voronoi.SiteList(pts)
         # c.triangulate = True
@@ -205,7 +234,13 @@ class Pattern(inkex.Effect):
         # attribs = {'d': path, 'style': simplestyle.formatStyle(patternstyle)}
         # inkex.etree.SubElement(pattern, inkex.addNS('path', 'svg'), attribs)
         #
-        # # link selected object to pattern
+        # link selected object to pattern
+        obj_styles = simplestyle.parseStyle(node.attrib[u'style'])
+        inkex.debug("obj_styles: " + str(obj_styles))
+        obj_styles[u'fill'] = u'url(#' + str(pattern.get('id')) + ')'
+        node.attrib[u'style'] = simplestyle.formatStyle(obj_styles)
+
+        # link selected object to pattern
         # obj = self.selected[self.options.ids[0]]
         # style = {}
         # if obj.attrib.has_key('style'):
@@ -219,7 +254,6 @@ class Pattern(inkex.Effect):
         #             style = simplestyle.parseStyle(node.attrib['style'])
         #         style['fill'] = 'url(#%s)' % pattern.get('id')
         #         node.attrib['style'] = simplestyle.formatStyle(style)
-
 if __name__ == '__main__':
     e = Pattern()
     e.affect()
