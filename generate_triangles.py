@@ -111,8 +111,47 @@ def pathCCW(paths):
         return True
     return False
 
+def getPathLen(path):
+    if len(path) == 2:
+        return np.linalg.norm(path[1] - path[0])
+    else:
+        return curve_utils.bezier_length(path)
 
-def generatePoints(svg_path):
+def pathEval(path, t):
+    if len(path) == 2:
+        return path[0] + t * (path[1] - path[0])
+    else:
+        return curve_utils.bezier_eval(path, t)
+
+def getTAtLen(path, st, length):
+    if len(path) == 2:
+        dt = length / getPathLen(path)
+        return st + dt
+    else:
+        return curve_utils.get_t_at_length(path, st, length)
+
+def getNormalAtT(path, t, ccw):
+    if len(path) == 2:
+        return curve_utils.line_normal(path, ccw)
+    else:
+        return curve_utils.bezier_normal(path, t, ccw)
+
+def pointInPath(paths, pt_loc, pm):
+    ray_dir = np.array([1.0, 0.0])
+    pt_end = pt_loc + 2.0 * ray_dir
+    intrsctns = 0
+    for path in paths:
+        if len(path) == 2:
+            intrsc_pts = curve_utils.intersect_line_ray(path, [pt_loc, pt_end])
+        else:
+            intrsc_pts = curve_utils.intersect_bezier_line(path, [pt_loc, pt_end], True)
+        intrsctns += len(intrsc_pts)
+
+    if intrsctns % 2 == 1:
+        return True
+    return False
+
+def generatePoints(svg_path, spacing):
     # find orientation of paths
     sx, sy = svg_path[0][1][0], svg_path[0][1][1]
     paths = []
@@ -135,22 +174,113 @@ def generatePoints(svg_path):
             paths.append(np.array([np.array([sx, sy]), np.array([ex, ey])]))
             sx, sy = ex, ey
 
-        elif path[0] == 'Z' and len(paths[-1]) == 2:
+        elif path[0] == 'Z' and (not np.array_equal(paths[-1][-1], paths[0][0])): # does not end at start, add segment connecting them
             paths.append(np.array([np.array([sx, sy]), np.array([svg_path[0][1][0], svg_path[0][1][1]])]))
 
-    if pathCCW(paths):
-        inkex.debug("path ccw")
-    else:
-        inkex.debug("path cw")
+    ccw = pathCCW(paths)
 
     points = []
-    v_pt = Point(1, np.array([27.0, 139.0]))
-    points.append(v_pt)
-    # for path in paths:
-    #     v_pt = Point(1, path[0])
-    #     points.append(v_pt)
-    #     inkex.debug("v_pt: " + str(v_pt))
-    return points
+    for path in paths:
+        v_pt = Point(1, path[0]) # vertex points
+        points.append(v_pt)
+
+        path_len = getPathLen(path)
+        segs_num = math.floor(path_len/spacing)
+        
+        if segs_num == 0:
+            continue
+
+        adj_spacing = path_len / segs_num
+        last_t = 0
+        for i in range (1, int(segs_num)):
+            t = getTAtLen(path, last_t, adj_spacing)
+            e_pt_loc = pathEval(path, t)
+            e_pt_norm = getNormalAtT(path, t, ccw)
+            e_pt = Point(2, e_pt_loc, e_pt_norm) # vertex points
+            points.append(e_pt)
+            last_t = t
+
+    pm = generateInternalPoints(paths, points, spacing)
+    return pm
+
+def generateInternalPoints(paths, pts, spacing):
+    Pm = spacing / math.sqrt(2) # min dist between any two points
+
+    pw = [] # existing points
+    pm = [] # to process later
+
+    def genFront(point):
+        pt_loc = point.loc + spacing * point.normal
+        return Point(3, pt_loc, point.normal)
+
+    def genLeft(point):
+        left_dir = curve_utils.rotate90ccw(point.normal)
+        pt_loc = point.loc + spacing * left_dir
+        return Point(3, pt_loc, left_dir)
+
+    def genRight(point):
+        right_dir = curve_utils.rotate90cw(point.normal)
+        pt_loc = point.loc + spacing * right_dir
+        return Point(3, pt_loc, right_dir)
+
+    def getClosestPt(point_loc):
+        min_dist = float("inf")
+        for pt in pm:
+            dist_2_pt = np.linalg.norm(pt.loc - point_loc)
+            if dist_2_pt < min_dist:
+                min_dist = dist_2_pt
+                closest_pt = pt
+        if min_dist < Pm:
+            return closest_pt
+        return None
+
+    def mergePoints(point1, point2): # point1 not yet added to pm or pw
+        def delFromPmPw(point):
+            try:
+                pm.remove(point2)
+                pw.remove(point2)
+            except ValueError:
+                pass
+        def takeAvg(pt1, pt2):
+            return Point(3, 0.5*(pt1.loc + pt2.loc))
+
+        if point1.type == 3:
+            if point2.type != 3:
+                return None
+            else:
+                avgPoint = takeAvg(point1, point2)
+                delFromPmPw(point2)
+                return avgPoint
+        else:
+            delFromPmPw(point2)
+            return point1
+
+    for point in pts:
+        if point.type == 2:
+            pw.append(point)
+        pm.append(point)
+
+    inkex.debug("len(pw): " + str(len(pw)))
+    while len(pw) > 0:
+        pt = pw[0]
+        pt_nbs = [genFront(pt), genLeft(pt), genRight(pt)]
+        for pt_nb in pt_nbs:
+            if pointInPath(paths, pt_nb.loc, pm):
+                closest_pt = getClosestPt(pt_nb.loc)
+                if closest_pt == None: # point survives
+                    pm.append(pt_nb)
+                    pw.append(pt_nb)
+                else:
+                    merged_pt = mergePoints(pt_nb, closest_pt)
+                    while closest_pt != None and merged_pt != None: # keep merging until no point nearby or point get eaten
+                        closest_pt = getClosestPt(merged_pt.loc)
+                        if closest_pt != None:
+                            merged_pt = mergePoints(pt_nb, closest_pt)
+                    if merged_pt != None:
+                        pm.append(merged_pt)
+        pw.pop(0)
+    return pm
+
 
 class Pattern(inkex.Effect):
     def __init__(self):
@@ -181,28 +311,45 @@ class Pattern(inkex.Effect):
             p = Popen('inkscape --query-%s --query-id=%s "%s"' % (query, self.options.ids[0], self.args[-1]), shell=True, stdout=PIPE, stderr=PIPE)
             rc = p.wait()
             q[query] = scale*float(p.stdout.read())
-        mat = simpletransform.composeParents(self.selected[self.options.ids[0]], [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
+        # mat = simpletransform.composeParents(self.selected[self.options.ids[0]], [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
 
-        defs = self.xpathSingle('/svg:svg//svg:defs')
-        pattern = inkex.etree.SubElement(defs ,inkex.addNS('pattern','svg'))
-        pattern.set('id', 'points' + str(random.randint(1, 9999)))
-        pattern.set('width', str(q['width']))
-        pattern.set('height', str(q['height']))
-        pattern.set('patternTransform', 'translate(%s,%s)' % (q['x'] - mat[0][2], q['y'] - mat[1][2]))
-        pattern.set('patternUnits', 'userSpaceOnUse')
+        # defs = self.xpathSingle('/svg:svg//svg:defs')
+        # pattern = inkex.etree.SubElement(defs ,inkex.addNS('pattern','svg'))
+        # pattern.set('id', 'points' + str(random.randint(1, 9999)))
+        # pattern.set('width', str(q['width']))
+        # pattern.set('height', str(q['height']))
+        # pattern.set('patternTransform', 'translate(%s,%s)' % (q['x'] - mat[0][2], q['y'] - mat[1][2]))
+        # pattern.set('patternUnits', 'userSpaceOnUse')
 
         # # generate random pattern of points
         node = self.selected.values()[0]
         path_string = node.attrib[u'd']
         svg_path = simplepath.parsePath(path_string)
 
-        pts = generatePoints(svg_path)
+        pts = generatePoints(svg_path, self.options.size)
         patternstyle = {'stroke': '#000000', 'stroke-width': str(scale)}
+
+        # create new layer to contain all points
+        points_layer = inkex.etree.SubElement(self.document.getroot(), inkex.addNS('g', 'svg'))
+        points_layer.set('id', "points_layer" + str(random.randint(1, 9999)))
+        points_layer.set("{%s}label" % inkex.NSS[u'inkscape'], "points_layer")
+        points_layer.set("{%s}groupmode"  % inkex.NSS[u'inkscape'], "layer")
+
+        # group for points
+        points_group = inkex.etree.SubElement(points_layer, inkex.addNS('g', 'svg'))
+
+        # display points
         for point in pts:
-            attern_transformed = inkex.etree.Element("{%s}pattern" % inkex.NSS[u'svg'])
-            # attribs = {'cx': str(point.loc[0]), 'cy': str(point.loc[1]), 'r':str(10), 'style': simplestyle.formatStyle(patternstyle)}
-            attribs = {'cx': str(point.loc[0]), 'cy': str(point.loc[1]), 'r':str(31.0), 'style': "opacity:0.98999999;fill:#000000;fill-opacity:1;stroke:#000000;stroke-width:0.30000001;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:4;stroke-dasharray:none;stroke-opacity:1"}
-            inkex.etree.SubElement(pattern, inkex.addNS('circle', 'svg'), attribs)
+            if point.type == 1:
+                style = "fill:#ff0000;fill-opacity:1;stroke:none;stroke-width:0.26458332;stroke-opacity:1"
+            elif point.type == 2:
+                style = "fill:#0000ff;fill-opacity:1;stroke:none;stroke-width:0.26458332;stroke-opacity:1"
+            elif point.type == 3:
+                style = "fill:#00ff00;fill-opacity:1;stroke:none;stroke-width:0.26458332;stroke-opacity:1"
+            elif point.type == 4:
+                style = "fill:#000000;fill-opacity:1;stroke:none;stroke-width:0.26458332;stroke-opacity:1"
+            attribs = {'cx': str(point.loc[0]), 'cy': str(point.loc[1]), 'r':str(1.0), 'style': style}
+            inkex.etree.SubElement(points_group, inkex.addNS('circle', 'svg'), attribs)
 
         # c = voronoi.Context()
         # pts = []
@@ -235,10 +382,10 @@ class Pattern(inkex.Effect):
         # inkex.etree.SubElement(pattern, inkex.addNS('path', 'svg'), attribs)
         #
         # link selected object to pattern
-        obj_styles = simplestyle.parseStyle(node.attrib[u'style'])
-        inkex.debug("obj_styles: " + str(obj_styles))
-        obj_styles[u'fill'] = u'url(#' + str(pattern.get('id')) + ')'
-        node.attrib[u'style'] = simplestyle.formatStyle(obj_styles)
+        # obj_styles = simplestyle.parseStyle(node.attrib[u'style'])
+        # inkex.debug("obj_styles: " + str(obj_styles))
+        # obj_styles[u'fill'] = u'url(#' + str(pattern.get('id')) + ')'
+        # node.attrib[u'style'] = simplestyle.formatStyle(obj_styles)
 
         # link selected object to pattern
         # obj = self.selected[self.options.ids[0]]
