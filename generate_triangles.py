@@ -19,10 +19,14 @@ except:
 
 class Point:
     # 1 for vertex point, 2 for edge point, 3 for internal point
+    timestamp = 0
+
     def __init__(self, type, loc, normal=np.array([1, 0])):
         self.type = type
         self.loc = loc
         self.normal = normal
+        self.timestamp = Point.timestamp
+        Point.timestamp += 1
 
     def __str__(self):
         if self.type == 1:
@@ -33,42 +37,6 @@ class Point:
             type_str = "i"
         return "type: " + type_str + ", loc" + str(self.loc)
 
-def clip_line(x1, y1, x2, y2, w, h):
-    if x1 < 0 and x2 < 0:
-        return [0, 0, 0, 0]
-    if x1 > w and x2 > w:
-        return [0, 0, 0, 0]
-    if x1 < 0:
-        y1 = (y1*x2 - y2*x1)/(x2 - x1)
-        x1 = 0
-    if x2 < 0:
-        y2 = (y1*x2 - y2*x1)/(x2 - x1)
-        x2 = 0
-    if x1 > w:
-        y1 = y1 + (w - x1)*(y2 - y1)/(x2 - x1)
-        x1 = w
-    if x2 > w:
-        y2 = y1 + (w - x1)*(y2 - y1)/(x2 - x1)
-        x2 = w
-    if y1 < 0 and y2 < 0:
-        return [0, 0, 0, 0]
-    if y1 > h and y2 > h:
-        return [0, 0, 0, 0]
-    if x1 == x2 and y1 == y2:
-        return [0, 0, 0, 0]
-    if y1 < 0:
-        x1 = (x1*y2 - x2*y1)/(y2 - y1)
-        y1 = 0
-    if y2 < 0:
-        x2 = (x1*y2 - x2*y1)/(y2 - y1)
-        y2 = 0
-    if y1 > h:
-        x1 = x1 + (h - y1)*(x2 - x1)/(y2 - y1)
-        y1 = h
-    if y2 > h:
-        x2 = x1 + (h - y1)*(x2 - x1)/(y2 - y1)
-        y2 = h
-    return [x1, y1, x2, y2]
 
 def getSignedAngle(vec1, vec2):
     # inkex.debug("vec1: " + str(vec1))
@@ -203,6 +171,8 @@ def generatePoints(svg_path, spacing):
             last_t = t
 
     pm = generateInternalPoints(paths, points, spacing)
+    # for point in pm:
+    #     inkex.debug("timestamp: " + str(point.timestamp))
     return pm
 
 def generateInternalPoints(paths, pts, spacing):
@@ -300,28 +270,7 @@ class Pattern(inkex.Effect):
                         dest="tab",
                         help="The selected UI-tab when OK was pressed")
 
-    def effect(self):
-        if not self.options.ids:
-            inkex.errormsg(_("Please select an object"))
-            exit()
-        scale = self.unittouu('1px')            # convert to document units
-        self.options.size *= scale
-        self.options.border *= scale
-        q = {'x':0,'y':0,'width':0,'height':0}  # query the bounding box of ids[0]
-
-        for query in q.keys():
-            p = Popen('inkscape --query-%s --query-id=%s "%s"' % (query, self.options.ids[0], self.args[-1]), shell=True, stdout=PIPE, stderr=PIPE)
-            rc = p.wait()
-            q[query] = scale*float(p.stdout.read())
-
-        # generate random pattern of points
-        node = self.selected.values()[0]
-        path_string = node.attrib[u'd']
-        svg_path = simplepath.parsePath(path_string)
-
-        pts = generatePoints(svg_path, self.options.size)
-        patternstyle = {'stroke': '#000000', 'stroke-width': str(scale)}
-
+    def display_pts(self, pts):
         # create new layer to contain all points
         points_layer = inkex.etree.SubElement(self.document.getroot(), inkex.addNS('g', 'svg'))
         points_layer.set('id', "points_layer" + str(random.randint(1, 9999)))
@@ -344,6 +293,48 @@ class Pattern(inkex.Effect):
             attribs = {'cx': str(point.loc[0]), 'cy': str(point.loc[1]), 'r':str(1.0), 'style': style}
             inkex.etree.SubElement(points_group, inkex.addNS('circle', 'svg'), attribs)
 
+    def display_triangles(self, pts_to_trig, triangles):
+        # create triangles layer
+        triangle_layer = inkex.etree.SubElement(self.document.getroot(), inkex.addNS('g', 'svg'))
+        triangle_layer.set('id', "triangle_layer" + str(random.randint(1, 9999)))
+        triangle_layer.set("{%s}label" % inkex.NSS[u'inkscape'], "triangle_layer")
+        triangle_layer.set("{%s}groupmode"  % inkex.NSS[u'inkscape'], "layer")
+
+        # group for triangles
+        triangles_group = inkex.etree.SubElement(triangle_layer, inkex.addNS('g', 'svg'))
+
+        style = "fill:none;stroke:#000000;stroke-width:0.26458332px;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1"
+        for triangle in triangles:
+            # inkex.debug("triangle: " + str(triangle[0]) + ", " + str(triangle[1]) + ", " + str(triangle[2]))
+            verts = [pts_to_trig[triangle[i]] for i in range(3)]
+            path = 'M %.3f,%.3f %.3f,%.3f %.3f,%.3f z' % (verts[0].x, verts[0].y, verts[1].x, verts[1].y, verts[2].x, verts[2].y)
+
+            attribs = {'d': path, 'style': style}
+            triangle_path = inkex.etree.SubElement(triangles_group, inkex.addNS('path', 'svg'), attribs)
+            triangle_path.set("{%s}connector-curvature" % inkex.NSS[u'inkscape'], "0")
+
+    def effect(self):
+        if not self.options.ids:
+            inkex.errormsg(_("Please select an object"))
+            exit()
+        scale = self.unittouu('1px')            # convert to document units
+        self.options.size *= scale
+        self.options.border *= scale
+        q = {'x':0,'y':0,'width':0,'height':0}  # query the bounding box of ids[0]
+
+        for query in q.keys():
+            p = Popen('inkscape --query-%s --query-id=%s "%s"' % (query, self.options.ids[0], self.args[-1]), shell=True, stdout=PIPE, stderr=PIPE)
+            rc = p.wait()
+            q[query] = scale*float(p.stdout.read())
+
+        # generate random pattern of points
+        node = self.selected.values()[0]
+        path_string = node.attrib[u'd']
+        svg_path = simplepath.parsePath(path_string)
+
+        pts = generatePoints(svg_path, self.options.size)
+        self.display_pts(pts)
+
         c = voronoi.Context()
         pts_to_trig = []
         for point in pts:
@@ -354,18 +345,14 @@ class Pattern(inkex.Effect):
         c.triangulate = True
         voronoi.voronoi(sl, c)
 
-        # group for triangles
-        triangles_group = inkex.etree.SubElement(points_layer, inkex.addNS('g', 'svg'))
-
-        style = "fill:none;stroke:#000000;stroke-width:0.26458332px;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1"
+        triangle_timestamps = []
         for triangle in c.triangles:
-            inkex.debug("triangle: " + str(triangle[0]) + ", " + str(triangle[1]) + ", " + str(triangle[2]))
-            verts = [pts_to_trig[triangle[i]] for i in range(3)]
-            path = 'M %.3f,%.3f %.3f,%.3f %.3f,%.3f z' % (verts[0].x, verts[0].y, verts[1].x, verts[1].y, verts[2].x, verts[2].y)
+            verts = [pts[triangle[i]] for i in range(3)]
+            min_tstmp = min([vert.timestamp for vert in verts])
+            triangle_timestamps.append(min_tstmp)
+        inkex.debug("triangle_timestamps: " + str(triangle_timestamps))
 
-            attribs = {'d': path, 'style': style}
-            triangle_path = inkex.etree.SubElement(triangles_group, inkex.addNS('path', 'svg'), attribs)
-            triangle_path.set("{%s}connector-curvature" % inkex.NSS[u'inkscape'], "0")
+        self.display_triangles(pts_to_trig, c.triangles)
 
 if __name__ == '__main__':
     e = Pattern()
