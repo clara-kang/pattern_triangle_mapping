@@ -137,16 +137,14 @@ def generatePoints(svg_path, spacing):
 
             sx, sy = px[-1], py[-1]
             curve_len = curve_utils.bezier_length(paths[-1])
-            # inkex.debug("curve_len: " + str(curve_len))
 
         elif path[0] == 'L':
             ex, ey = path[1][0], path[1][1]
             paths.append(np.array([np.array([sx, sy]), np.array([ex, ey])]))
             sx, sy = ex, ey
-
-        elif path[0] == 'Z' and (not np.array_equal(paths[-1][-1], paths[0][0])): # does not end at start, add segment connecting them
+        elif path[0] == 'Z' and (not np.isclose(paths[-1][-1], paths[0][0]).all()): # does not end at start, add segment connecting them
             paths.append(np.array([np.array([sx, sy]), np.array([svg_path[0][1][0], svg_path[0][1][1]])]))
-
+    inkex.debug("paths: " + str(paths))
     ccw = pathCCW(paths)
 
     points = []
@@ -293,7 +291,7 @@ class Pattern(inkex.Effect):
             attribs = {'cx': str(point.loc[0]), 'cy': str(point.loc[1]), 'r':str(1.0), 'style': style}
             inkex.etree.SubElement(points_group, inkex.addNS('circle', 'svg'), attribs)
 
-    def display_triangles(self, pts_to_trig, triangles):
+    def display_triangles(self, pts, triangle_used, triangles, quads):
         # create triangles layer
         triangle_layer = inkex.etree.SubElement(self.document.getroot(), inkex.addNS('g', 'svg'))
         triangle_layer.set('id', "triangle_layer" + str(random.randint(1, 9999)))
@@ -303,15 +301,32 @@ class Pattern(inkex.Effect):
         # group for triangles
         triangles_group = inkex.etree.SubElement(triangle_layer, inkex.addNS('g', 'svg'))
 
-        style = "fill:none;stroke:#000000;stroke-width:0.26458332px;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1"
-        for triangle in triangles:
-            # inkex.debug("triangle: " + str(triangle[0]) + ", " + str(triangle[1]) + ", " + str(triangle[2]))
-            verts = [pts_to_trig[triangle[i]] for i in range(3)]
-            path = 'M %.3f,%.3f %.3f,%.3f %.3f,%.3f z' % (verts[0].x, verts[0].y, verts[1].x, verts[1].y, verts[2].x, verts[2].y)
-
+        def createElem(path, group):
+            style = "fill:none;stroke:#000000;stroke-width:0.26458332px;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1"
             attribs = {'d': path, 'style': style}
-            triangle_path = inkex.etree.SubElement(triangles_group, inkex.addNS('path', 'svg'), attribs)
-            triangle_path.set("{%s}connector-curvature" % inkex.NSS[u'inkscape'], "0")
+            elem_path = inkex.etree.SubElement(group, inkex.addNS('path', 'svg'), attribs)
+            elem_path.set("{%s}connector-curvature" % inkex.NSS[u'inkscape'], "0")
+
+        def createPath(verts):
+            path = 'M'
+            for vert in verts:
+                coord_str = '%.3f,%.3f' % (vert.loc[0], vert.loc[1])
+                path = path + ' ' + coord_str
+            path = path + ' z'
+            return path
+
+        for trnl_id in range(len(triangles)):
+            triangle = triangles[trnl_id]
+            if not triangle_used[trnl_id]:
+                # inkex.debug("triangle: " + str(triangle[0]) + ", " + str(triangle[1]) + ", " + str(triangle[2]))
+                verts = [pts[triangle[i]] for i in range(3)]
+                path = createPath(verts)
+                createElem(path, triangles_group)
+
+        for quad in quads:
+            verts = [pts[quad[i]] for i in range(4)]
+            path = createPath(verts)
+            createElem(path, triangles_group)
 
     def effect(self):
         if not self.options.ids:
@@ -345,14 +360,72 @@ class Pattern(inkex.Effect):
         c.triangulate = True
         voronoi.voronoi(sl, c)
 
-        triangle_timestamps = []
-        for triangle in c.triangles:
+        edge_to_triangle = {}
+        triangle_timestamps = [0] * len(c.triangles)
+        triangle_used = [False] * len(c.triangles)
+        quads = []
+
+        for trngl_indx in range(len(c.triangles)):
+            triangle = c.triangles[trngl_indx]
+            # compute timestamp for each triangle
             verts = [pts[triangle[i]] for i in range(3)]
             min_tstmp = min([vert.timestamp for vert in verts])
-            triangle_timestamps.append(min_tstmp)
-        inkex.debug("triangle_timestamps: " + str(triangle_timestamps))
+            triangle_timestamps[trngl_indx] = min_tstmp
+            # build edge_to_triangle
+            for j in range(0, 3):
+                id1 = triangle[j]
+                id2 = triangle[(j+1)%3]
+                if id1 < id2:
+                    edge = (id1, id2)
+                else:
+                    edge = (id2, id1)
+                if edge in edge_to_triangle:
+                    edge_to_triangle[edge].append(trngl_indx)
+                else:
+                    edge_to_triangle[edge] = [trngl_indx]
+                # inkex.debug("edge: " + str(edge))
+                # inkex.debug("triangle: " + str(triangle))
 
-        self.display_triangles(pts_to_trig, c.triangles)
+
+        def getThirdInkex(triangle, edge):
+            for id in triangle:
+                if id not in edge:
+                    return id
+
+        def getEdgeLen(pt1, pt2):
+            return np.linalg.norm(pt1.loc - pt2.loc)
+
+        def processTriangles(matchTimestamp):
+            # process triangles
+            for edge in edge_to_triangle:
+                if len(edge_to_triangle[edge]) == 2:
+                    tringl1, tringl2 = edge_to_triangle[edge]
+                    # skip if either triangle used
+                    if triangle_used[tringl1] or triangle_used[tringl2]:
+                        continue
+                    if matchTimestamp and triangle_timestamps[tringl1] != triangle_timestamps[tringl2]:
+                        continue
+
+                    # get third index of triangle
+                    third_id1 = getThirdInkex(c.triangles[tringl1], edge)
+                    third_id2 = getThirdInkex(c.triangles[tringl2], edge)
+                    # get edge length
+                    edge_len = getEdgeLen(pts[edge[0]], pts[edge[1]])
+                    # get other edges length
+                    trigl1_edge_len = [getEdgeLen(pts[edge[0]], pts[third_id1]), getEdgeLen(pts[edge[1]], pts[third_id1])]
+                    trigl2_edge_len = [getEdgeLen(pts[edge[0]], pts[third_id2]), getEdgeLen(pts[edge[1]], pts[third_id2])]
+                    # check if the connecting edge is longest edge of both triangles
+                    if all(edge_len >= el for el in trigl1_edge_len) and all(edge_len >= el for el in trigl2_edge_len):
+                        # if yes, create quadrilateral
+                        quads.append([edge[0], third_id1, edge[1], third_id2])
+                        triangle_used[tringl1] = True
+                        triangle_used[tringl2] = True
+
+        processTriangles(True)
+        processTriangles(False)
+        inkex.debug("quads: " + str(quads))
+
+        self.display_triangles(pts, triangle_used, c.triangles, quads)
 
 if __name__ == '__main__':
     e = Pattern()
