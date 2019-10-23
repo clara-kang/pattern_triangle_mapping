@@ -251,7 +251,6 @@ def generateInternalPoints(paths, pts, spacing):
         pw.pop(0)
     return pm
 
-
 class Pattern(inkex.Effect):
     def __init__(self):
         inkex.Effect.__init__(self)
@@ -365,6 +364,14 @@ class Pattern(inkex.Effect):
         triangle_used = [False] * len(c.triangles)
         quads = []
 
+        def rejectOutofRangeTringl():
+            for trngl_indx in range(len(c.triangles)):
+                triangle = c.triangles[trngl_indx]
+                if pts[triangle[0]].type != 3 and pts[triangle[1]].type != 3 and pts[triangle[2]].type != 3:
+                    triangle_used[trngl_indx] = True
+
+        rejectOutofRangeTringl()
+
         for trngl_indx in range(len(c.triangles)):
             triangle = c.triangles[trngl_indx]
             # compute timestamp for each triangle
@@ -395,7 +402,7 @@ class Pattern(inkex.Effect):
         def getEdgeLen(pt1, pt2):
             return np.linalg.norm(pt1.loc - pt2.loc)
 
-        def processTriangles(matchTimestamp):
+        def matchLongestEdge(matchTimestamp):
             # process triangles
             for edge in edge_to_triangle:
                 if len(edge_to_triangle[edge]) == 2:
@@ -421,8 +428,8 @@ class Pattern(inkex.Effect):
                         triangle_used[tringl1] = True
                         triangle_used[tringl2] = True
 
-        processTriangles(True)
-        processTriangles(False)
+        matchLongestEdge(True)
+        matchLongestEdge(False)
         inkex.debug("quads: " + str(quads))
 
         self.display_triangles(pts, triangle_used, c.triangles, quads)
