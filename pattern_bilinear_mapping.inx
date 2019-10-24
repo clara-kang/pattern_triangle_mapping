@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <inkscape-extension xmlns="http://www.inkscape.org/namespace/inkscape/extension">
-    <_name>Triangle Pattern</_name>
-    <id>triangle.pattern</id>
-    <dependency type="executable" location="extensions">pattern_perspective_matching.py</dependency>
+    <_name>Quads Pattern</_name>
+    <id>quad.pattern</id>
+    <dependency type="executable" location="extensions">pattern_bilinear_mapping.py</dependency>
     <param name="pattern_name" type="string" _gui-text="Pattern Id:">default</param>
     <effect needs-live-preview="false">
         <object-type>path</object-type>
@@ -11,6 +11,6 @@
         </effects-menu>
     </effect>
     <script>
-        <command reldir="extensions" interpreter="python">pattern_perspective_matching.py</command>
+        <command reldir="extensions" interpreter="python">pattern_bilinear_mapping.py</command>
     </script>
 </inkscape-extension>
