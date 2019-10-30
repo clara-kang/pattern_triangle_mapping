@@ -136,7 +136,7 @@ def generatePoints(svg_path, spacing):
             paths.append(np.array([np.array(pt) for pt in zip(px, py)]))
 
             sx, sy = px[-1], py[-1]
-            curve_len = curve_utils.bezier_length(paths[-1])
+            # curve_len = curve_utils.bezier_length(paths[-1])
 
         elif path[0] == 'L':
             ex, ey = path[1][0], path[1][1]
@@ -290,7 +290,21 @@ class Pattern(inkex.Effect):
             attribs = {'cx': str(point.loc[0]), 'cy': str(point.loc[1]), 'r':str(1.0), 'style': style}
             inkex.etree.SubElement(points_group, inkex.addNS('circle', 'svg'), attribs)
 
-    def display_triangles(self, pts, triangle_used, triangles, quads):
+    def createElem(self, path, group):
+        style = "fill:none;stroke:#000000;stroke-width:0.26458332px;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1"
+        attribs = {'d': path, 'style': style}
+        elem_path = inkex.etree.SubElement(group, inkex.addNS('path', 'svg'), attribs)
+        elem_path.set("{%s}connector-curvature" % inkex.NSS[u'inkscape'], "0")
+
+    def createPath(self, verts):
+        path = 'M'
+        for vert in verts:
+            coord_str = '%.3f,%.3f' % (vert.loc[0], vert.loc[1])
+            path = path + ' ' + coord_str
+        path = path + ' z'
+        return path
+
+    def display_triangles(self, pts, triangle_used, triangles):
         # create triangles layer
         triangle_layer = inkex.etree.SubElement(self.document.getroot(), inkex.addNS('g', 'svg'))
         triangle_layer.set('id', "triangle_layer" + str(random.randint(1, 9999)))
@@ -300,32 +314,28 @@ class Pattern(inkex.Effect):
         # group for triangles
         triangles_group = inkex.etree.SubElement(triangle_layer, inkex.addNS('g', 'svg'))
 
-        def createElem(path, group):
-            style = "fill:none;stroke:#000000;stroke-width:0.26458332px;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1"
-            attribs = {'d': path, 'style': style}
-            elem_path = inkex.etree.SubElement(group, inkex.addNS('path', 'svg'), attribs)
-            elem_path.set("{%s}connector-curvature" % inkex.NSS[u'inkscape'], "0")
-
-        def createPath(verts):
-            path = 'M'
-            for vert in verts:
-                coord_str = '%.3f,%.3f' % (vert.loc[0], vert.loc[1])
-                path = path + ' ' + coord_str
-            path = path + ' z'
-            return path
-
         for trnl_id in range(len(triangles)):
             triangle = triangles[trnl_id]
             if not triangle_used[trnl_id]:
                 # inkex.debug("triangle: " + str(triangle[0]) + ", " + str(triangle[1]) + ", " + str(triangle[2]))
                 verts = [pts[triangle[i]] for i in range(3)]
-                path = createPath(verts)
-                createElem(path, triangles_group)
+                path = self.createPath(verts)
+                self.createElem(path, triangles_group)
+
+    def display_quads(self, pts, quads):
+        # create triangles layer
+        quad_layer = inkex.etree.SubElement(self.document.getroot(), inkex.addNS('g', 'svg'))
+        quad_layer.set('id', "triangle_layer" + str(random.randint(1, 9999)))
+        quad_layer.set("{%s}label" % inkex.NSS[u'inkscape'], "quad_layer")
+        quad_layer.set("{%s}groupmode"  % inkex.NSS[u'inkscape'], "layer")
+
+        # group for triangles
+        # quad_group = inkex.etree.SubElement(quad_layer, inkex.addNS('g', 'svg'))
 
         for quad in quads:
             verts = [pts[quad[i]] for i in range(4)]
-            path = createPath(verts)
-            createElem(path, triangles_group)
+            path = self.createPath(verts)
+            self.createElem(path, quad_layer)
 
     def effect(self):
         if not self.options.ids:
@@ -432,7 +442,8 @@ class Pattern(inkex.Effect):
         matchLongestEdge(False)
         inkex.debug("quads: " + str(quads))
 
-        self.display_triangles(pts, triangle_used, c.triangles, quads)
+        self.display_triangles(pts, triangle_used, c.triangles)
+        self.display_quads(pts, quads)
 
 if __name__ == '__main__':
     e = Pattern()
