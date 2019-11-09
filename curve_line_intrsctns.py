@@ -63,15 +63,19 @@ def line_normal(pts, ccw):
         return rotate90cw(tangent)
 
 def intersect_line_ray(pts1, pts2): # line 2 is ray
+    return intersect_line_line(pts1, pts2, True)
+
+def intersect_line_line(pts1, pts2, isRay=False):
     line_dir = pts1[1] - pts1[0]
     ray_dir =  pts2[1] - pts2[0]
     A = np.array([ray_dir, -line_dir]).T
-    B = pts1[0] - pts2[0]
-    X = np.linalg.solve(A, B)
-    dist, t = X[0], X[1]
+    if np.linalg.matrix_rank(A) == 2:
+        B = pts1[0] - pts2[0]
+        X = np.linalg.solve(A, B)
+        dist, t = X[0], X[1]
 
-    if t >= 0 and t <= 1 and dist >= 0:
-        return [pts2[0]+dist*ray_dir]
+        if t >= 0 and t <= 1 and dist >= 0 and ( (not isRay and dist<=1) or isRay):
+            return [pts2[0]+dist*ray_dir]
     return []
 
 def intersect_bezier_line(ctrl_pts, pts, isRay=False):

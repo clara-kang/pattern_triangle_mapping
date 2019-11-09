@@ -17,6 +17,8 @@ except:
     inkex.errormsg(_("Python version is: ") + str(inkex.sys.version_info))
     exit()
 
+threshold = 2.0
+
 class Point:
     # 1 for vertex point, 2 for edge point, 3 for internal point
     timestamp = 0
@@ -39,13 +41,10 @@ class Point:
 
 
 def getSignedAngle(vec1, vec2):
-    # inkex.debug("vec1: " + str(vec1))
-    # inkex.debug("vec2: " + str(vec2))
     a = np.dot(vec1, vec2) / ( np.linalg.norm(vec1)  * np.linalg.norm(vec2))
     if a >= 1: # vector parallel, angle is 0
         return 0
     angle = math.acos(np.dot(vec1, vec2) / ( np.linalg.norm(vec1)  * np.linalg.norm(vec2)))
-    # inkex.debug("angle: " + str(angle * 180 / 3.14159))
     vec1_3d = np.append(vec1, 0)
     vec2_3d = np.append(vec2, 0)
 
@@ -60,7 +59,6 @@ def pathCCW(paths):
     angle_sum = 0
     vec1 = paths[-1][1] - paths[-1][0]
     for path in paths:
-        # inkex.debug("path----")
         # bezier curve
         if (len(path) == 4):
             for i in range(0, 3):
@@ -106,7 +104,7 @@ def getNormalAtT(path, t, ccw):
     else:
         return curve_utils.bezier_normal(path, t, ccw)
 
-def pointInPath(paths, pt_loc, pm):
+def pointInPath(paths, pt_loc):
     ray_dir = np.array([1.0, 0.0])
     pt_end = pt_loc + 2.0 * ray_dir
     intrsctns = 0
@@ -120,58 +118,6 @@ def pointInPath(paths, pt_loc, pm):
     if intrsctns % 2 == 1:
         return True
     return False
-
-def generatePoints(svg_path, spacing):
-    # find orientation of paths
-    sx, sy = svg_path[0][1][0], svg_path[0][1][1]
-    paths = []
-
-    # for path in svg_path:
-    #     inkex.debug("svg_path: " + str(path))
-    for path in svg_path:
-        # bezier curve
-        if path[0] == 'C':
-            px = [sx] + [path[1][i] for i in range(0, 5, 2)]
-            py = [sy] + [path[1][i] for i in range(1, 6, 2)]
-            paths.append(np.array([np.array(pt) for pt in zip(px, py)]))
-
-            sx, sy = px[-1], py[-1]
-            # curve_len = curve_utils.bezier_length(paths[-1])
-
-        elif path[0] == 'L':
-            ex, ey = path[1][0], path[1][1]
-            paths.append(np.array([np.array([sx, sy]), np.array([ex, ey])]))
-            sx, sy = ex, ey
-        elif path[0] == 'Z' and (not np.isclose(paths[-1][-1], paths[0][0]).all()): # does not end at start, add segment connecting them
-            paths.append(np.array([np.array([sx, sy]), np.array([svg_path[0][1][0], svg_path[0][1][1]])]))
-    inkex.debug("paths: " + str(paths))
-    ccw = pathCCW(paths)
-
-    points = []
-    for path in paths:
-        v_pt = Point(1, path[0]) # vertex points
-        points.append(v_pt)
-
-        path_len = getPathLen(path)
-        segs_num = math.floor(path_len/spacing)
-
-        if segs_num == 0:
-            continue
-
-        adj_spacing = path_len / segs_num
-        last_t = 0
-        for i in range (1, int(segs_num)):
-            t = getTAtLen(path, last_t, adj_spacing)
-            e_pt_loc = pathEval(path, t)
-            e_pt_norm = getNormalAtT(path, t, ccw)
-            e_pt = Point(2, e_pt_loc, e_pt_norm) # vertex points
-            points.append(e_pt)
-            last_t = t
-
-    pm = generateInternalPoints(paths, points, spacing)
-    # for point in pm:
-    #     inkex.debug("timestamp: " + str(point.timestamp))
-    return pm
 
 def generateInternalPoints(paths, pts, spacing):
     Pm = spacing / math.sqrt(2) # min dist between any two points
@@ -230,12 +176,11 @@ def generateInternalPoints(paths, pts, spacing):
             pw.append(point)
         pm.append(point)
 
-    inkex.debug("len(pw): " + str(len(pw)))
     while len(pw) > 0:
         pt = pw[0]
         pt_nbs = [genFront(pt), genLeft(pt), genRight(pt)]
         for pt_nb in pt_nbs:
-            if pointInPath(paths, pt_nb.loc, pm):
+            if pointInPath(paths, pt_nb.loc):
                 closest_pt = getClosestPt(pt_nb.loc)
                 if closest_pt == None: # point survives
                     pm.append(pt_nb)
@@ -267,6 +212,53 @@ class Pattern(inkex.Effect):
                         dest="tab",
                         help="The selected UI-tab when OK was pressed")
 
+    def generatePoints(self, svg_path, spacing):
+        # find orientation of paths
+        sx, sy = svg_path[0][1][0], svg_path[0][1][1]
+        self.paths = []
+
+        for path in svg_path:
+            # bezier curve
+            if path[0] == 'C':
+                px = [sx] + [path[1][i] for i in range(0, 5, 2)]
+                py = [sy] + [path[1][i] for i in range(1, 6, 2)]
+                self.paths.append(np.array([np.array(pt) for pt in zip(px, py)]))
+
+                sx, sy = px[-1], py[-1]
+                # curve_len = curve_utils.bezier_length(paths[-1])
+
+            elif path[0] == 'L':
+                ex, ey = path[1][0], path[1][1]
+                self.paths.append(np.array([np.array([sx, sy]), np.array([ex, ey])]))
+                sx, sy = ex, ey
+            elif path[0] == 'Z' and (not np.isclose(self.paths[-1][-1], self.paths[0][0]).all()): # does not end at start, add segment connecting them
+                self.paths.append(np.array([np.array([sx, sy]), np.array([svg_path[0][1][0], svg_path[0][1][1]])]))
+        ccw = pathCCW(self.paths)
+
+        points = []
+        for path in self.paths:
+            v_pt = Point(1, path[0]) # vertex points
+            points.append(v_pt)
+
+            path_len = getPathLen(path)
+            segs_num = math.floor(path_len/spacing)
+
+            if segs_num == 0:
+                continue
+
+            adj_spacing = path_len / segs_num
+            last_t = 0
+            for i in range (1, int(segs_num)):
+                t = getTAtLen(path, last_t, adj_spacing)
+                e_pt_loc = pathEval(path, t)
+                e_pt_norm = getNormalAtT(path, t, ccw)
+                e_pt = Point(2, e_pt_loc, e_pt_norm) # vertex points
+                points.append(e_pt)
+                last_t = t
+
+        pm = generateInternalPoints(self.paths, points, spacing)
+        return pm
+
     def display_pts(self, pts):
         # create new layer to contain all points
         points_layer = inkex.etree.SubElement(self.document.getroot(), inkex.addNS('g', 'svg'))
@@ -290,8 +282,8 @@ class Pattern(inkex.Effect):
             attribs = {'cx': str(point.loc[0]), 'cy': str(point.loc[1]), 'r':str(1.0), 'style': style}
             inkex.etree.SubElement(points_group, inkex.addNS('circle', 'svg'), attribs)
 
-    def createElem(self, path, group):
-        style = "fill:none;stroke:#000000;stroke-width:0.26458332px;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1"
+    def createElem(self, path, group, fillcolor):
+        style = "fill:" + fillcolor + ";stroke:#000000;stroke-width:0.26458332px;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1"
         attribs = {'d': path, 'style': style}
         elem_path = inkex.etree.SubElement(group, inkex.addNS('path', 'svg'), attribs)
         elem_path.set("{%s}connector-curvature" % inkex.NSS[u'inkscape'], "0")
@@ -317,10 +309,9 @@ class Pattern(inkex.Effect):
         for trnl_id in range(len(triangles)):
             triangle = triangles[trnl_id]
             if not triangle_used[trnl_id]:
-                # inkex.debug("triangle: " + str(triangle[0]) + ", " + str(triangle[1]) + ", " + str(triangle[2]))
                 verts = [pts[triangle[i]] for i in range(3)]
                 path = self.createPath(verts)
-                self.createElem(path, triangles_group)
+                self.createElem(path, triangles_group, "#a6e2ff")
 
     def display_quads(self, pts, quads):
         # create triangles layer
@@ -335,7 +326,7 @@ class Pattern(inkex.Effect):
         for quad in quads:
             verts = [pts[quad[i]] for i in range(4)]
             path = self.createPath(verts)
-            self.createElem(path, quad_layer)
+            self.createElem(path, quad_layer, "#ffa4a4")
 
     def effect(self):
         if not self.options.ids:
@@ -356,7 +347,7 @@ class Pattern(inkex.Effect):
         path_string = node.attrib[u'd']
         svg_path = simplepath.parsePath(path_string)
 
-        pts = generatePoints(svg_path, self.options.size)
+        pts = self.generatePoints(svg_path, self.options.size)
         self.display_pts(pts)
 
         c = voronoi.Context()
@@ -374,11 +365,18 @@ class Pattern(inkex.Effect):
         triangle_used = [False] * len(c.triangles)
         quads = []
 
+        def getTriangularMidPoint(pt1, pt2, pt3):
+            mid_2_3 = pt2.loc + 0.5 * (pt3.loc - pt2.loc)
+            mid_1_3 = pt1.loc + 0.5 * (pt3.loc - pt1.loc)
+            return curve_utils.intersect_line_line([pt1.loc, mid_2_3], [pt2.loc, mid_1_3])[0]
+
         def rejectOutofRangeTringl():
             for trngl_indx in range(len(c.triangles)):
                 triangle = c.triangles[trngl_indx]
                 if pts[triangle[0]].type != 3 and pts[triangle[1]].type != 3 and pts[triangle[2]].type != 3:
-                    triangle_used[trngl_indx] = True
+                    triangle_midpt = getTriangularMidPoint(pts[triangle[0]], pts[triangle[1]], pts[triangle[2]])
+                    if not pointInPath(self.paths, triangle_midpt):
+                        triangle_used[trngl_indx] = True
 
         rejectOutofRangeTringl()
 
@@ -400,9 +398,6 @@ class Pattern(inkex.Effect):
                     edge_to_triangle[edge].append(trngl_indx)
                 else:
                     edge_to_triangle[edge] = [trngl_indx]
-                # inkex.debug("edge: " + str(edge))
-                # inkex.debug("triangle: " + str(triangle))
-
 
         def getThirdInkex(triangle, edge):
             for id in triangle:
@@ -411,6 +406,12 @@ class Pattern(inkex.Effect):
 
         def getEdgeLen(pt1, pt2):
             return np.linalg.norm(pt1.loc - pt2.loc)
+
+        def getAngle(pt1, pt2, pt3):
+            vec1 = pt1.loc - pt2.loc
+            vec2 = pt3.loc - pt2.loc
+            angle = np.dot(vec1, vec2 ) / (np.linalg.norm(vec1) * np.linalg.norm(vec2))
+            return math.acos(angle)
 
         def matchLongestEdge(matchTimestamp):
             # process triangles
@@ -438,9 +439,53 @@ class Pattern(inkex.Effect):
                         triangle_used[tringl1] = True
                         triangle_used[tringl2] = True
 
+        def createNiceQuads(matchTimestamp):
+            # process triangles
+            for edge in edge_to_triangle:
+                if len(edge_to_triangle[edge]) == 2:
+                    tringl1, tringl2 = edge_to_triangle[edge]
+                    # skip if either triangle used
+                    if triangle_used[tringl1] or triangle_used[tringl2]:
+                        continue
+                    if matchTimestamp and triangle_timestamps[tringl1] != triangle_timestamps[tringl2]:
+                        continue
+
+                    # get third index of triangle
+                    third_id1 = getThirdInkex(c.triangles[tringl1], edge)
+                    third_id2 = getThirdInkex(c.triangles[tringl2], edge)
+                    # get edge length
+                    quad_lens = []
+                    edge_len = getEdgeLen(pts[edge[0]], pts[edge[1]])
+                    # get other edges length
+                    quad_lens.extend([getEdgeLen(pts[edge[0]], pts[third_id1]), getEdgeLen(pts[edge[1]], pts[third_id1])])
+                    quad_lens.extend([getEdgeLen(pts[edge[0]], pts[third_id2]), getEdgeLen(pts[edge[1]], pts[third_id2])])
+                    avg_quad_len = sum(quad_lens)/len(quad_lens)
+                    len_diff = 0
+                    for quad_len in quad_lens:
+                        len_diff += abs(quad_len - avg_quad_len)/avg_quad_len
+
+                    angles = []
+                    angles.append(getAngle(pts[edge[0]], pts[third_id1], pts[edge[1]]))
+                    angles.append(getAngle(pts[third_id1], pts[edge[1]], pts[third_id2]))
+                    angles.append(getAngle(pts[edge[1]], pts[third_id2], pts[edge[0]]))
+                    angles.append(getAngle(pts[third_id2], pts[edge[0]], pts[third_id1]))
+
+                    angle_diff = 0
+                    for angle in angles:
+                        angle_diff += abs(angle - 3.14159/2.0) / (3.14159/2)
+
+                    # check if the connecting edge is longest edge of both triangles
+                    if len_diff + angle_diff <= threshold:
+                        # if yes, create quadrilateral
+                        quads.append([edge[0], third_id1, edge[1], third_id2])
+                        triangle_used[tringl1] = True
+                        triangle_used[tringl2] = True
+
+
         matchLongestEdge(True)
         matchLongestEdge(False)
-        inkex.debug("quads: " + str(quads))
+        createNiceQuads(True)
+        createNiceQuads(False)
 
         self.display_triangles(pts, triangle_used, c.triangles)
         self.display_quads(pts, quads)
